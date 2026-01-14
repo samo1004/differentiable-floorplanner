@@ -189,17 +189,29 @@ def plot_layout(case_path: str, out_path: str, save_path: str | None,
     ax.add_patch(Rectangle((0, 0), chip_w, chip_h, fill=False, linewidth=2.0))
     ax.set_title(f"Layout view | HPWL={hpwl:.1f}\ncase={Path(case_path).name}, out={Path(out_path).name}")
 
-    # Draw fixed (blue)
+    # Draw fixed: blue outline only
     for name, r in fixed_rects.items():
-        ax.add_patch(Rectangle((r.x, r.y), r.w, r.h, alpha=0.35, linewidth=1.0))
-        if show_labels:
-            ax.text(r.cx, r.cy, name, ha="center", va="center", fontsize=7)
+        ax.add_patch(
+            Rectangle(
+                (r.x, r.y), r.w, r.h,
+                fill=False,
+                edgecolor="blue",
+                linewidth=1.8,
+                zorder=2,
+            )
+        )
 
-    # Draw soft (red)
+    # Draw soft: red outline only
     for name, r in soft_rects.items():
-        ax.add_patch(Rectangle((r.x, r.y), r.w, r.h, alpha=0.35, linewidth=1.0))
-        if show_labels:
-            ax.text(r.cx, r.cy, name, ha="center", va="center", fontsize=7)
+        ax.add_patch(
+            Rectangle(
+                (r.x, r.y), r.w, r.h,
+                fill=False,
+                edgecolor="red",
+                linewidth=1.2,
+                zorder=3,
+            )
+        )
 
     # Overlaps: soft-soft + soft-fixed (black)
     overlaps: List[Rect] = []
@@ -222,8 +234,18 @@ def plot_layout(case_path: str, out_path: str, save_path: str | None,
             if inter:
                 overlaps.append(inter)
 
+    # Overlap: solid black overlay on top
     for r in overlaps:
-        ax.add_patch(Rectangle((r.x, r.y), r.w, r.h, alpha=0.9, linewidth=0))
+        ax.add_patch(
+            Rectangle(
+                (r.x, r.y), r.w, r.h,
+                facecolor="black",
+                edgecolor="none",
+                alpha=0.85,
+                zorder=10,
+            )
+        )
+
 
     if overlaps:
         ax.text(0.02, 0.98, f"OVERLAP DETECTED: {len(overlaps)}",
@@ -248,7 +270,14 @@ def plot_layout(case_path: str, out_path: str, save_path: str | None,
             rb = all_rects[b]
             # linewidth scaling: 0.2 ~ 3.0
             lw = 0.2 + 2.8 * (math.sqrt(w) / math.sqrt(w_max))
-            ax.plot([ra.cx, rb.cx], [ra.cy, rb.cy], linewidth=lw, alpha=0.6)
+            ax.plot(
+                [ra.cx, rb.cx], [ra.cy, rb.cy],
+                color="black",
+                linewidth=lw,
+                alpha=0.35,
+                zorder=1
+            )
+
 
     # Grid
     if grid_step is None:
