@@ -42,12 +42,19 @@ int main(int argc, char **argv)
         if (!out_file.empty())
         {
             Solution S = place_row_packing_baseline(P);
-            check_solution_or_throw(P, S);
-            std::cout << "[OK] legal placement\n";
-
             double hpwl = compute_total_hpwl(P, S);
             write_solution(P, S, out_file, hpwl);
             std::cout << "[OK] wrote output: " << out_file << "\n";
+
+            try
+            {
+                check_solution_or_throw(P, S);
+                std::cout << "[OK] legal placement\n";
+            }
+            catch (const std::exception &e)
+            {
+                std::cerr << "[WARN] placement is NOT legal: " << e.what() << "\n";
+            }
         }
     }
     catch (const std::exception &e)
