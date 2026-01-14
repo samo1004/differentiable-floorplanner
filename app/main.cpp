@@ -6,6 +6,7 @@
 #include "baseline.hpp"
 #include "hpwl.hpp"
 #include "writer.hpp"
+#include "checker.hpp"
 
 int main(int argc, char **argv)
 {
@@ -41,6 +42,9 @@ int main(int argc, char **argv)
         if (!out_file.empty())
         {
             Solution S = place_row_packing_baseline(P);
+            check_solution_or_throw(P, S);
+            std::cout << "[OK] legal placement\n";
+
             double hpwl = compute_total_hpwl(P, S);
             write_solution(P, S, out_file, hpwl);
             std::cout << "[OK] wrote output: " << out_file << "\n";
