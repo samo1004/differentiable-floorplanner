@@ -41,7 +41,7 @@ int main(int argc, char **argv)
 
         if (!out_file.empty())
         {
-            Solution S = place_row_packing_baseline(P);
+            Solution S = place_obstacle_aware_baseline(P);
             double hpwl = compute_total_hpwl(P, S);
             write_solution(P, S, out_file, hpwl);
             std::cout << "[OK] wrote output: " << out_file << "\n";

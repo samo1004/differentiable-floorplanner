@@ -2,137 +2,219 @@
 #include <cmath>
 #include <stdexcept>
 #include <algorithm>
+#include <unordered_set>
 
-static Rect choose_soft_rect(int min_area)
+// ---------------------------
+// Helpers
+// ---------------------------
+static inline long long area_ll(int w, int h)
 {
-    if (min_area <= 0)
-        return Rect{0, 0, 1, 1};
-
-    // For row-based packing, prefer wider rectangles to reduce row heights.
-    // Start from w ~= sqrt(2A) (tends to give h/w ~ 0.5), then adjust to satisfy:
-    //   area >= A and 0.5 <= h/w <= 2
-    int w = std::max(1, (int)std::floor(std::sqrt(2.0 * min_area)));
-    int h = (min_area + w - 1) / w;
-
-    // If too wide (h/w < 0.5), decrease w until ratio ok.
-    while (2LL * h < w)
-    {
-        --w;
-        if (w <= 0)
-        {
-            w = 1;
-            break;
-        }
-        h = (min_area + w - 1) / w;
-    }
-
-    // If too tall (h/w > 2), increase w.
-    while ((long long)h > 2LL * w)
-    {
-        ++w;
-        h = (min_area + w - 1) / w;
-    }
-
-    // Final safety: ensure area >= min_area.
-    while ((long long)w * h < min_area)
-        ++h;
-
-    return Rect{0, 0, w, h};
+    return 1LL * w * h;
 }
 
-static bool overlap_with_any_fixed(const Problem &P, const Rect &r, int &blocking_x2)
+static bool aspect_ok(int w, int h)
+{
+    // 0.5 <= h/w <= 2  <=> 2h >= w and h <= 2w
+    return (2LL * h >= w) && (1LL * h <= 2LL * w);
+}
+
+static void add_shape(std::vector<std::pair<int, int>> &shapes, int A, int w, int h)
+{
+    if (w <= 0 || h <= 0)
+        return;
+    if (area_ll(w, h) < A)
+        return;
+    if (!aspect_ok(w, h))
+        return;
+
+    for (auto &p : shapes)
+    {
+        if (p.first == w && p.second == h)
+            return;
+    }
+    shapes.push_back({w, h});
+}
+
+static std::vector<std::pair<int, int>> gen_shapes(int A)
+{
+    std::vector<std::pair<int, int>> shapes;
+    if (A <= 0)
+    {
+        shapes.push_back({1, 1});
+        return shapes;
+    }
+
+    // 1) near-square
+    int w1 = std::max(1, (int)std::ceil(std::sqrt((double)A)));
+    int h1 = (A + w1 - 1) / w1;
+    add_shape(shapes, A, w1, h1);
+    add_shape(shapes, A, h1, w1);
+
+    // 2) wider
+    int w2 = std::max(1, (int)std::ceil(std::sqrt(2.0 * A)));
+    int h2 = (A + w2 - 1) / w2;
+    add_shape(shapes, A, w2, h2);
+    add_shape(shapes, A, h2, w2);
+
+    // 3) taller-ish
+    int w3 = std::max(1, (int)std::ceil(std::sqrt(0.5 * A)));
+    int h3 = (A + w3 - 1) / w3;
+    add_shape(shapes, A, w3, h3);
+    add_shape(shapes, A, h3, w3);
+
+    // fallback
+    if (shapes.empty())
+        add_shape(shapes, A, w1, h1);
+    return shapes;
+}
+
+static bool overlaps_any(const Rect &r, const std::vector<Rect> &obstacles, int &max_y2)
 {
     bool hit = false;
-    int max_x2 = -1;
-    for (int fid : P.fixed_ids)
+    int m = -1;
+    for (const auto &o : obstacles)
     {
-        const Rect &fr = P.modules[fid].fixed_rect;
-        if (overlap_area_positive(r, fr))
+        if (overlap_area_positive(r, o))
         {
             hit = true;
-            max_x2 = std::max(max_x2, fr.x2());
+            m = std::max(m, o.y2());
         }
     }
     if (hit)
-        blocking_x2 = max_x2;
+        max_y2 = m;
     return hit;
 }
 
-static Solution place_impl(const Problem &P, bool avoid_fixed)
+// For a fixed x,w,h, compute the minimum y >= 0 such that rect does NOT overlap obstacles.
+// Return y if feasible, or INF if not feasible.
+static int drop_y(const Problem &P, int x, int w, int h, const std::vector<Rect> &obstacles)
+{
+    const int INF = 1e9;
+    int y = 0;
+
+    // progress guard: y must strictly increase when overlapping
+    for (int iter = 0; iter <= (int)obstacles.size(); ++iter)
+    {
+        if (y + h > P.chip_h)
+            return INF;
+
+        Rect cand{x, y, w, h};
+        int max_y2 = -1;
+        if (!overlaps_any(cand, obstacles, max_y2))
+        {
+            return y; // legal at this x
+        }
+
+        if (max_y2 <= y)
+        {
+            // Should not happen, but safety
+            return INF;
+        }
+        y = max_y2;
+    }
+    return INF;
+}
+
+static std::vector<int> gen_x_candidates(const Problem &P, int w, const std::vector<Rect> &obstacles)
+{
+    std::vector<int> xs;
+    xs.reserve(obstacles.size() * 2 + 4);
+    xs.push_back(0);
+    xs.push_back(std::max(0, P.chip_w - w));
+
+    for (const auto &o : obstacles)
+    {
+        xs.push_back(o.x2());  // place to the right of obstacle
+        xs.push_back(o.x - w); // place to the left of obstacle
+    }
+
+    // keep only valid range
+    std::vector<int> out;
+    out.reserve(xs.size());
+    for (int x : xs)
+    {
+        if (x < 0)
+            continue;
+        if (x + w > P.chip_w)
+            continue;
+        out.push_back(x);
+    }
+
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+// ---------------------------
+// Main baseline: obstacle-aware placement
+// ---------------------------
+Solution place_obstacle_aware_baseline(const Problem &P)
 {
     Solution sol;
     sol.rects.resize(P.n());
 
-    // Fixed rects are known.
+    // Obstacles start with fixed rects
+    std::vector<Rect> obstacles;
+    obstacles.reserve(P.fixed_ids.size() + P.soft_ids.size());
+
     for (int fid : P.fixed_ids)
-        sol.rects[fid] = P.modules[fid].fixed_rect;
-
-    int x = 0, y = 0, row_h = 0;
-
-    for (int sid : P.soft_ids)
     {
-        Rect r = choose_soft_rect(P.modules[sid].min_area);
+        Rect fr = P.modules[fid].fixed_rect;
+        sol.rects[fid] = fr;
+        obstacles.push_back(fr);
+    }
 
-        if (r.w > P.chip_w || r.h > P.chip_h)
-        {
-            throw std::runtime_error("BaselinePlaceError: a soft module is larger than the chip.");
-        }
+    // Place larger soft modules first (more robust)
+    std::vector<int> order = P.soft_ids;
+    std::sort(order.begin(), order.end(),
+              [&](int a, int b)
+              {
+                  return P.modules[a].min_area > P.modules[b].min_area;
+              });
 
-        while (true)
+    for (int sid : order)
+    {
+        const auto &m = P.modules[sid];
+        int A = m.min_area;
+
+        auto shapes = gen_shapes(A);
+
+        bool placed = false;
+        Rect best;
+        int best_y = 1e9;
+        int best_x = 1e9;
+
+        for (auto [w, h] : shapes)
         {
-            // Fix infinite loop in baseline row packing when row_h==0
-            if (x + r.w > P.chip_w)
-            {
-                // 沒放進任何東西就換行 => row_h 會是 0，y 不會動，會卡死
-                if (row_h == 0)
-                {
-                    throw std::runtime_error(
-                        "BaselinePlaceError: row blocked by fixed obstacles (no progress).");
-                }
-                x = 0;
-                y += row_h;
-                row_h = 0;
+            if (w > P.chip_w || h > P.chip_h)
                 continue;
-            }
-            if (y + r.h > P.chip_h)
-            {
-                throw std::runtime_error("BaselinePlaceError: cannot fit all soft modules inside chip.");
-            }
 
-            Rect cand = r;
-            cand.x = x;
-            cand.y = y;
-
-            if (avoid_fixed)
+            auto xs = gen_x_candidates(P, w, obstacles);
+            for (int x : xs)
             {
-                int block_x2 = -1;
-                if (overlap_with_any_fixed(P, cand, block_x2))
-                {
-                    x = std::max(x, block_x2);
+                int y = drop_y(P, x, w, h, obstacles);
+                if (y >= 1000000000)
                     continue;
+
+                // pick lowest y, then lowest x
+                if (y < best_y || (y == best_y && x < best_x))
+                {
+                    best_y = y;
+                    best_x = x;
+                    best = Rect{x, y, w, h};
+                    placed = true;
                 }
             }
-
-            sol.rects[sid] = cand;
-            x += cand.w;
-            row_h = std::max(row_h, cand.h);
-            break;
         }
+
+        if (!placed)
+        {
+            throw std::runtime_error("BaselinePlaceError: cannot place soft module '" + m.name + "' legally.");
+        }
+
+        sol.rects[sid] = best;
+        obstacles.push_back(best);
     }
 
     return sol;
-}
-
-Solution place_row_packing_baseline(const Problem &P)
-{
-    // Pass 1: try to avoid fixed obstacles.
-    try
-    {
-        return place_impl(P, /*avoid_fixed=*/true);
-    }
-    catch (...)
-    {
-        // Pass 2: ignore fixed to ensure we can always produce an output file.
-        return place_impl(P, /*avoid_fixed=*/false);
-    }
 }
