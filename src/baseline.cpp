@@ -80,6 +80,7 @@ static Solution place_impl(const Problem &P, bool avoid_fixed)
 
         while (true)
         {
+            // Fix infinite loop in baseline row packing when row_h==0
             if (x + r.w > P.chip_w)
             {
                 // 沒放進任何東西就換行 => row_h 會是 0，y 不會動，會卡死
