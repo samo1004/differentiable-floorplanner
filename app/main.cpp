@@ -1,21 +1,26 @@
 #include <iostream>
 #include <algorithm>
+
 #include "parser.hpp"
 #include "sanity.hpp"
+#include "baseline.hpp"
+#include "hpwl.hpp"
+#include "writer.hpp"
 
 int main(int argc, char **argv)
 {
-    if (argc != 2)
+    if (argc != 2 && argc != 3)
     {
-        std::cerr << "Usage: placer <case-input.txt>\n";
+        std::cerr << "Usage: placer <case-input.txt> [out.txt]\n";
         return 1;
     }
-    std::string file = argv[1];
+    std::string in_file = argv[1];
+    std::string out_file = (argc == 3 ? argv[2] : "");
 
     try
     {
-        Problem P = parse_problem(file);
-        sanity_check_fixed(P, file);
+        Problem P = parse_problem(in_file);
+        sanity_check_fixed(P, in_file);
 
         int max_w = 0;
         int max_deg = 0;
@@ -33,28 +38,12 @@ int main(int argc, char **argv)
                   << ", max_degree: " << max_deg << "\n";
         std::cout << "[OK] parse + sanity passed.\n";
 
-        // print all parsed modules
-        for (int i = 0; i < P.n(); ++i)
+        if (!out_file.empty())
         {
-            const Module &m = P.modules[i];
-            std::cout << "Module " << i << ": " << m.name
-                      << ", type=" << (m.type == ModuleType::Soft ? "Soft" : "Fixed");
-            if (m.type == ModuleType::Soft)
-            {
-                std::cout << ", min_area=" << m.min_area << "\n";
-            }
-            else
-            {
-                std::cout << ", fixed_rect=("
-                          << m.fixed_rect.x << "," << m.fixed_rect.y
-                          << "," << m.fixed_rect.w << "," << m.fixed_rect.h << ")\n";
-            }
-        }
-
-        // print all parsed edges
-        for (const auto &e : P.edges)
-        {
-            std::cout << "Edge: (" << e.u << ", " << e.v << "), weight=" << e.w << "\n";
+            Solution S = place_row_packing_baseline(P);
+            double hpwl = compute_total_hpwl(P, S);
+            write_solution(P, S, out_file, hpwl);
+            std::cout << "[OK] wrote output: " << out_file << "\n";
         }
     }
     catch (const std::exception &e)
@@ -62,6 +51,5 @@ int main(int argc, char **argv)
         std::cerr << "[ERROR] " << e.what() << "\n";
         return 2;
     }
-
     return 0;
 }

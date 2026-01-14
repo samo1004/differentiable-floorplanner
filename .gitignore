@@ -1,13 +1,9 @@
-# build outputs
+*.exe
 *.o
 *.obj
-*.exe
 *.out
-a.out
+out*.txt
 build/
-cmake-build-*/
-
-# OS / editor
 .DS_Store
 Thumbs.db
 .vscode/
