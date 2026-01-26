@@ -145,18 +145,15 @@ static std::vector<int> gen_x_candidates(const Problem &P, int w, const std::vec
     return out;
 }
 
-// ---------------------------
-// Main baseline: obstacle-aware placement
-// ---------------------------
-Solution place_obstacle_aware_baseline(const Problem &P)
+Solution decode_obstacle_aware(const Problem &P, const std::vector<int> &soft_order)
 {
     Solution sol;
     sol.rects.resize(P.n());
 
-    // Obstacles start with fixed rects
     std::vector<Rect> obstacles;
     obstacles.reserve(P.fixed_ids.size() + P.soft_ids.size());
 
+    // fixed -> obstacles
     for (int fid : P.fixed_ids)
     {
         Rect fr = P.modules[fid].fixed_rect;
@@ -164,15 +161,8 @@ Solution place_obstacle_aware_baseline(const Problem &P)
         obstacles.push_back(fr);
     }
 
-    // Place larger soft modules first (more robust)
-    std::vector<int> order = P.soft_ids;
-    std::sort(order.begin(), order.end(),
-              [&](int a, int b)
-              {
-                  return P.modules[a].min_area > P.modules[b].min_area;
-              });
-
-    for (int sid : order)
+    // ✅ 注意：這裡不排序了，直接照 soft_order 放
+    for (int sid : soft_order)
     {
         const auto &m = P.modules[sid];
         int A = m.min_area;
@@ -196,7 +186,6 @@ Solution place_obstacle_aware_baseline(const Problem &P)
                 if (y >= 1000000000)
                     continue;
 
-                // pick lowest y, then lowest x
                 if (y < best_y || (y == best_y && x < best_x))
                 {
                     best_y = y;
@@ -217,4 +206,16 @@ Solution place_obstacle_aware_baseline(const Problem &P)
     }
 
     return sol;
+}
+
+Solution place_obstacle_aware_baseline(const Problem &P)
+{
+    std::vector<int> order = P.soft_ids;
+    std::sort(order.begin(), order.end(),
+              [&](int a, int b)
+              {
+                  return P.modules[a].min_area > P.modules[b].min_area;
+              });
+
+    return decode_obstacle_aware(P, order);
 }
