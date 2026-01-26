@@ -1,11 +1,18 @@
+# Build artifacts
 *.exe
 *.o
 *.obj
 *.out
-out*.txt
 build/
+
+# Output files (generated results)
+output/
+
+# IDE and OS files
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+
+# Visualization output
 vis/

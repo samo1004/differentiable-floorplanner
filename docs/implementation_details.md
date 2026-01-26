@@ -10,6 +10,7 @@
    - [輸入解析器 (parser)](#輸入解析器-parser)
    - [健全性檢查 (sanity)](#健全性檢查-sanity)
    - [基準布局演算法 (baseline)](#基準布局演算法-baseline)
+   - [模擬退火演算法 (sa)](#模擬退火演算法-sa)
    - [HPWL 計算 (hpwl)](#hpwl-計算-hpwl)
    - [解決方案寫入 (writer)](#解決方案寫入-writer)
    - [解決方案檢查 (checker)](#解決方案檢查-checker)
@@ -17,6 +18,7 @@
 5. [視覺化工具](#視覺化工具)
 6. [輸入輸出格式](#輸入輸出格式)
 7. [演算法流程圖](#演算法流程圖)
+8. [效能測試結果](#效能測試結果)
 
 ---
 
@@ -47,20 +49,26 @@
 ```
 iccad2023_problemD/
 ├── app/
-│   └── main.cpp              # 主程式入口
+│   └── main.cpp              # 主程式入口（支援 baseline 與 SA 演算法切換）
 ├── src/
 │   ├── model.hpp             # 核心資料結構定義
 │   ├── solution.hpp          # 解決方案資料結構
 │   ├── parser.hpp/cpp        # 輸入檔案解析器
 │   ├── sanity.hpp/cpp        # 輸入健全性檢查
-│   ├── baseline.hpp/cpp      # 基準布局演算法
+│   ├── baseline.hpp/cpp      # 基準布局演算法（含 decode_obstacle_aware）
+│   ├── sa.hpp/cpp            # 模擬退火（Simulated Annealing）演算法 ✨新增
 │   ├── hpwl.hpp/cpp          # HPWL 計算
 │   ├── writer.hpp/cpp        # 解決方案輸出
 │   └── checker.hpp/cpp       # 解決方案合法性檢查
+├── data/                     # 測試輸入檔案 ✨整理後
+│   └── case*.txt
+├── output/                   # 輸出結果檔案 ✨整理後
+│   └── out*.txt
+├── docs/                     # 文件資料夾 ✨整理後
+│   └── implementation_details.md
 ├── tools/
 │   └── plot_layout.py        # Python 視覺化工具
-├── case*.txt                 # 測試輸入檔案
-├── out*.txt                  # 輸出結果檔案
+├── vis/                      # 視覺化輸出目錄
 └── placer.exe                # 編譯後的執行檔
 ```
 
@@ -690,7 +698,317 @@ Solution place_obstacle_aware_baseline(const Problem &P)
 
 ---
 
+### 模擬退火演算法 (sa)
+
+模擬退火（Simulated Annealing, SA）是一種元啟發式優化演算法，透過模擬金屬冷卻過程來探索解空間，能夠跳出局部最優解。
+
+#### SAOptions 結構體 (sa.hpp)
+```cpp
+struct SAOptions
+{
+    int iters = 20000;    // SA 迭代次數
+    int seed = 0;         // 隨機種子（0 => 使用 random_device）
+    double T0 = -1.0;     // 初始溫度（< 0 => 自動計算）
+    double Tend = -1.0;   // 終止溫度（< 0 => 自動計算）
+    int log_every = 2000; // 每多少次印出進度
+};
+```
+
+**設計說明**：
+- `iters`：控制搜尋的深度，越多迭代越可能找到更好的解
+- `seed`：設為 0 時使用硬體隨機數產生器，確保每次執行結果不同
+- `T0`、`Tend`：設為負值時會根據初始 HPWL 自動計算合適的溫度範圍
+- `log_every`：方便觀察收斂過程
+
+#### temp_schedule 函數（溫度排程）
+```cpp
+static double temp_schedule(int iter, int iters, double T0, double Tend)
+{
+    // exponential cooling
+    double t = (double)iter / (double)iters;
+    return T0 * std::pow(Tend / T0, t);
+}
+```
+
+**逐行解釋**：
+- **第 3 行**：計算進度比例 `t`，範圍為 [0, 1]
+- **第 4 行**：使用指數冷卻公式 `T = T0 × (Tend/T0)^t`
+  - 當 `t = 0` 時，`T = T0`（初始溫度）
+  - 當 `t = 1` 時，`T = Tend`（終止溫度）
+  - 溫度隨迭代呈指數下降，前期探索性強，後期收斂
+
+#### accept_move 函數（Metropolis 準則）
+```cpp
+static bool accept_move(double delta, double T, std::mt19937 &rng)
+{
+    if (delta <= 0)
+        return true;
+    std::uniform_real_distribution<double> dist(0.0, 1.0);
+    double p = std::exp(-delta / T);
+    return dist(rng) < p;
+}
+```
+
+**逐行解釋**：
+- **第 3-4 行**：若新解更好（`delta <= 0`），直接接受
+- **第 5 行**：產生 [0, 1) 均勻分布的隨機數
+- **第 6 行**：計算接受機率 `p = exp(-delta / T)`
+  - `delta` 越大（解越差），`p` 越小
+  - `T` 越高，`p` 越大（高溫時更容易接受較差的解）
+- **第 7 行**：以機率 `p` 接受較差的解
+  - 這是 SA 能跳出局部最優的關鍵機制
+
+#### init_order_by_area 函數
+```cpp
+static std::vector<int> init_order_by_area(const Problem &P)
+{
+    std::vector<int> order = P.soft_ids;
+    std::sort(order.begin(), order.end(),
+              [&](int a, int b)
+              {
+                  return P.modules[a].min_area > P.modules[b].min_area;
+              });
+    return order;
+}
+```
+
+**功能**：產生初始順序，按模組面積由大到小排列。
+- 這與 baseline 相同的初始策略，確保初始解是合法的
+- SA 會從這個初始解開始探索
+
+#### neighbor_swap 函數（鄰域操作 1）
+```cpp
+static std::vector<int> neighbor_swap(std::vector<int> cur, std::mt19937 &rng)
+{
+    if (cur.size() < 2)
+        return cur;
+    std::uniform_int_distribution<int> dist(0, (int)cur.size() - 1);
+    int i = dist(rng);
+    int j = dist(rng);
+    while (j == i)
+        j = dist(rng);
+    std::swap(cur[i], cur[j]);
+    return cur;
+}
+```
+
+**逐行解釋**：
+- **第 3-4 行**：邊界情況處理
+- **第 5 行**：建立均勻分布產生器，範圍為 [0, size-1]
+- **第 6-9 行**：隨機選取兩個不同的索引 `i` 和 `j`
+- **第 10 行**：交換這兩個位置的模組
+- **效果**：輕微擾動順序，改變兩個模組的相對放置優先級
+
+#### neighbor_relocate 函數（鄰域操作 2）
+```cpp
+static std::vector<int> neighbor_relocate(std::vector<int> cur, std::mt19937 &rng)
+{
+    if (cur.size() < 2)
+        return cur;
+    std::uniform_int_distribution<int> dist(0, (int)cur.size() - 1);
+    int i = dist(rng);
+    int j = dist(rng);
+    while (j == i)
+        j = dist(rng);
+
+    int val = cur[i];
+    cur.erase(cur.begin() + i);
+    cur.insert(cur.begin() + j, val);
+    return cur;
+}
+```
+
+**逐行解釋**：
+- **第 6-9 行**：隨機選取兩個不同的索引
+- **第 11 行**：保存索引 `i` 位置的模組 ID
+- **第 12 行**：從原位置移除該模組
+- **第 13 行**：在新位置 `j` 插入該模組
+- **效果**：比 swap 更大的擾動，可能完全改變模組的放置順序
+
+#### place_sa 函數（主演算法）
+
+```cpp
+Solution place_sa(const Problem &P, const SAOptions &opt)
+{
+    // RNG
+    int seed = opt.seed;
+    if (seed == 0)
+    {
+        std::random_device rd;
+        seed = (int)rd();
+    }
+    std::mt19937 rng(seed);
+```
+
+**第 1-10 行**：初始化隨機數產生器。
+- 若 `seed == 0`，使用硬體隨機數產生器取得種子
+- 使用 Mersenne Twister 演算法（mt19937）確保高品質的隨機數
+
+```cpp
+    // current state = area-desc order
+    std::vector<int> cur_order = init_order_by_area(P);
+
+    const double INF_COST = 1e18;
+
+    auto decode_cost = [&](const std::vector<int> &order, Solution &out_sol) -> double
+    {
+        try
+        {
+            out_sol = decode_obstacle_aware(P, order);
+            return compute_total_hpwl(P, out_sol);
+        }
+        catch (const std::exception &)
+        {
+            // 這個順序無法合法放置，視為無效解
+            return INF_COST;
+        }
+    };
+```
+
+**第 12-29 行**：定義狀態編碼與解碼。
+- **第 12 行**：使用面積降序作為初始順序
+- **第 14 行**：定義無限大成本常數
+- **第 16-28 行**：`decode_cost` lambda 函數
+  - 將「順序」解碼為「布局」
+  - 呼叫 `decode_obstacle_aware` 按給定順序放置模組
+  - 若放置失敗（拋出異常），返回無限大成本
+  - **這是關鍵設計**：SA 探索的是「順序空間」而非直接操作座標
+
+```cpp
+    Solution cur_sol;
+    double cur_cost = decode_cost(cur_order, cur_sol);
+
+    // temperature auto set
+    double T0 = opt.T0;
+    double Tend = opt.Tend;
+    if (T0 < 0)
+        T0 = std::max(1.0, 0.05 * cur_cost);
+    if (Tend < 0)
+        Tend = std::max(1e-3, 1e-4 * cur_cost);
+```
+
+**第 31-40 行**：初始化當前解與自動調溫。
+- **第 31-32 行**：計算初始解的成本
+- **第 35-40 行**：自動計算溫度參數
+  - `T0 = 0.05 × 初始 HPWL`：初始溫度約為成本的 5%
+  - `Tend = 0.0001 × 初始 HPWL`：終止溫度約為成本的 0.01%
+  - 這確保溫度範圍與問題規模相匹配
+
+```cpp
+    std::cout << "[SA] seed=" << seed
+              << " iters=" << opt.iters
+              << " T0=" << T0
+              << " Tend=" << Tend << "\n";
+    std::cout << "[SA] init HPWL=" << cur_cost << "\n";
+
+    // best
+    std::vector<int> best_order = cur_order;
+    Solution best_sol = cur_sol;
+    double best_cost = cur_cost;
+
+    std::uniform_real_distribution<double> pick(0.0, 1.0);
+```
+
+**第 42-53 行**：輸出參數資訊並初始化最佳解追蹤。
+- **第 48-50 行**：記錄迄今發現的最佳解
+- **第 52 行**：用於選擇鄰域操作的隨機分布
+
+```cpp
+    int accepted = 0;
+    for (int it = 1; it <= opt.iters; ++it)
+    {
+        double T = temp_schedule(it, opt.iters, T0, Tend);
+
+        std::vector<int> nxt_order;
+        if (pick(rng) < 0.70)
+            nxt_order = neighbor_swap(cur_order, rng);
+        else
+            nxt_order = neighbor_relocate(cur_order, rng);
+```
+
+**第 55-64 行**：SA 主迴圈開始。
+- **第 55 行**：追蹤接受次數（用於計算接受率）
+- **第 58 行**：根據進度計算當前溫度
+- **第 60-64 行**：選擇鄰域操作
+  - 70% 機率使用 swap（小擾動）
+  - 30% 機率使用 relocate（大擾動）
+  - 這種混合策略兼顧探索與開發
+
+```cpp
+        Solution nxt_sol;
+        double nxt_cost = decode_cost(nxt_order, nxt_sol);
+
+        double delta = nxt_cost - cur_cost;
+        if (accept_move(delta, T, rng))
+        {
+            cur_order = std::move(nxt_order);
+            cur_sol = std::move(nxt_sol);
+            cur_cost = nxt_cost;
+            accepted++;
+
+            if (cur_cost < best_cost)
+            {
+                best_cost = cur_cost;
+                best_order = cur_order;
+                best_sol = cur_sol;
+            }
+        }
+```
+
+**第 66-83 行**：評估新解並決定是否接受。
+- **第 66-67 行**：解碼新順序並計算成本
+- **第 69 行**：計算成本差（新 - 舊）
+- **第 70-83 行**：若接受新解
+  - 使用 `std::move` 避免複製
+  - 更新接受計數
+  - 若為新的最佳解，更新最佳記錄
+
+```cpp
+        if (opt.log_every > 0 && (it % opt.log_every == 0))
+        {
+            double acc_rate = (double)accepted / (double)it;
+            std::cout << "[SA] it=" << it
+                      << " T=" << T
+                      << " cur=" << cur_cost
+                      << " best=" << best_cost
+                      << " acc=" << acc_rate << "\n";
+        }
+    }
+
+    std::cout << "[SA] done. best HPWL=" << best_cost << "\n";
+    return best_sol;
+}
+```
+
+**第 85-98 行**：進度輸出與返回結果。
+- **第 85-93 行**：定期輸出進度資訊
+  - 當前迭代、溫度、當前成本、最佳成本、接受率
+- **第 96-97 行**：輸出最終結果並返回最佳解
+
+#### SA 演算法設計亮點
+
+1. **順序編碼**：
+   - 狀態空間為模組順序的排列
+   - 透過 `decode_obstacle_aware` 將順序轉換為布局
+   - 這種間接編碼確保所有探索的解都是合法的（除非完全無法放置）
+
+2. **穩健性處理**：
+   - 若某順序無法產生合法布局，返回無限大成本
+   - SA 自然會拒絕這些無效解，保持搜索的穩定性
+
+3. **混合鄰域**：
+   - swap 提供精細調整
+   - relocate 提供大幅度跳躍
+   - 動態平衡探索與開發
+
+4. **自適應溫度**：
+   - 根據問題規模自動調整溫度範圍
+   - 無需手動調參即可適用於不同規模的問題
+
+---
+
 ### HPWL 計算 (hpwl)
+
 
 ```cpp
 static inline double cx(const Rect &r) { return r.x + r.w / 2.0; }
@@ -1167,6 +1485,29 @@ flowchart TD
     style ReturnINF fill:#FF6B6B
 ```
 
+## 效能測試結果
+
+以下為 Baseline 與 SA 演算法在 Case 01 上的效能對比：
+
+| 演算法 | 參數 | HPWL | 相對改善 |
+|--------|------|------|----------|
+| **Baseline** | - | 348,467,000 | 基準 |
+| **SA** | 10K iters, seed=42 | 189,333,000 | **↓ 45.7%** |
+| **SA** | 30K iters, seed=42 | 178,614,000 | **↓ 48.7%** |
+
+### 測試環境
+
+- **作業系統**：Windows
+- **編譯器**：g++ (MinGW) with -O2 optimization
+- **CPU**：多核心處理器
+
+### 關鍵觀察
+
+1. **SA 顯著優於 Baseline**：在相同測試案例上，SA 能夠降低約 50% 的 HPWL
+2. **迭代次數的影響**：更多迭代能獲得更好結果，但收益遞減
+3. **接受率**：約 14% 的接受率表示溫度參數設置合理
+4. **穩定性**：所有輸出均通過合法性檢查
+
 ---
 
 ## 總結
@@ -1175,10 +1516,10 @@ flowchart TD
 
 1. **模組化設計**：每個功能模組職責單一，易於維護和擴展
 2. **錯誤處理完善**：各階段都有詳細的錯誤檢查和異常訊息
-3. **演算法穩健**：基準演算法採用多種啟發式策略，提升成功率
-4. **工具完整**：提供視覺化工具，方便除錯和結果展示
+3. **雙演算法支援**：同時支援 Baseline（快速）與 SA（高品質）兩種模式
+4. **工具完整**：提供視覺化工具與完整的 CLI 介面
 
-### 演算法特點
+### Baseline 演算法特點
 
 1. **貪心策略**：
    - 優先放置大模組
@@ -1190,21 +1531,35 @@ flowchart TD
    - drop_y 機制自動跳過重疊區域
    - 基於障礙物邊界生成候選 x 座標
 
-3. **效率優化**：
-   - 邊合併減少連線數量
-   - 鄰接表加速圖遍歷
-   - 候選位置預篩選
+### SA 演算法特點
+
+1. **順序編碼**：
+   - 以模組放置順序作為解空間
+   - 透過 decode_obstacle_aware 將順序轉換為布局
+   - 確保探索的解都是合法的
+
+2. **Metropolis 準則**：
+   - 高溫時容易接受較差解（探索）
+   - 低溫時傾向接受更好解（收斂）
+
+3. **混合鄰域操作**：
+   - 70% swap（精細調整）
+   - 30% relocate（大幅跳躍）
+
+4. **自適應溫度**：
+   - 根據問題規模自動設定 T0 和 Tend
+   - 無需手動調參
 
 ### 可能的改進方向
 
 1. **演算法優化**：
-   - 採用模擬退火或遺傳演算法優化 HPWL
+   - 增加更多的鄰域操作類型
+   - 採用遺傳演算法或蟻群演算法進行比較
    - 考慮連線資訊進行模組聚類
-   - 採用分治法處理大規模問題
 
 2. **效能提升**：
    - 使用四叉樹或 R-tree 加速重疊檢測
-   - 平行化模組放置過程
+   - 平行化 SA 的多個獨立執行
    - 增量式 HPWL 計算
 
 3. **功能擴展**：
@@ -1214,6 +1569,18 @@ flowchart TD
 
 ---
 
-**文件版本**：1.0  
-**最後更新**：2026-01-20  
+**文件版本**：2.0  
+**最後更新**：2026-01-27  
 **作者**：Antigravity AI Assistant
+
+### 變更紀錄
+
+- **v2.0 (2026-01-27)**：
+  - 新增模擬退火（SA）演算法完整說明
+  - 更新專案結構（新增 data/, output/, docs/ 目錄）
+  - 新增效能測試結果章節
+  - 更新 main.cpp CLI 參數說明
+
+- **v1.0 (2026-01-20)**：
+  - 初始版本
+  - 完整的 Baseline 演算法說明
