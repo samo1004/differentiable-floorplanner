@@ -7,6 +7,7 @@ build/
 
 # Output files (generated results)
 output/
+benchmark_results.json
 
 # IDE and OS files
 .DS_Store
@@ -16,3 +17,19 @@ Thumbs.db
 
 # Visualization output
 vis/
+*.gif
+*.mp4
+*.png
+*.jpg
+
+# Allow README assets
+!assets/
+!assets/**
+
+# Python
+__pycache__/
+*.py[cod]
+*venv*/
+
+# Secret explanations
+CODE_EXPLANATION.md
