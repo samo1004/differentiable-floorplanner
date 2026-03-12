@@ -4,7 +4,8 @@
 > ICCAD 2023 Problem D — Fixed-Outline Floorplanning with Rectilinear Soft Blocks
 
 本專案實作 ICCAD 2023 Problem D 的 **global optimization stage**：將 floorplanning 建模為**連續可微分最佳化問題**，利用 PyTorch 自動微分與梯度下降，同時優化所有模組的位置與形狀參數（aspect ratio）。在 CPU 上約 **~2 秒**可產出 **low-HPWL 的高品質初始解**（可能仍有少量 overlap / boundary violations），後續可將時間預算留給 **shape refinement** 與 **legalization**。
-
+>視覺化展示
+>![case06 training animation](assets/case06_demo.gif)
 ## 專案亮點
 
 - **Differentiable Objective Formulation**：將 HPWL / overlap / boundary violations 建模為可微分目標函數。
