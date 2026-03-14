@@ -33,3 +33,4 @@ __pycache__/
 
 # Secret explanations
 CODE_EXPLANATION.md
+tmp_results.json
