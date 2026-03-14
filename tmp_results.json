@@ -1,0 +1,26 @@
+[
+  {
+    "case": "case01",
+    "strategy": "escalating",
+    "avg_hpwl": 141627076.19677734,
+    "best_hpwl": 141627076.19677734,
+    "avg_overlap_ratio": 109.93036119709538,
+    "avg_boundary": 0.0,
+    "avg_ar_violations": 0.0,
+    "avg_elapsed": 0.6557698249816895,
+    "legal_count": 0,
+    "total_count": 1
+  },
+  {
+    "case": "case01",
+    "strategy": "fixed",
+    "avg_hpwl": 141627076.19677734,
+    "best_hpwl": 141627076.19677734,
+    "avg_overlap_ratio": 109.93036119709538,
+    "avg_boundary": 0.0,
+    "avg_ar_violations": 0.0,
+    "avg_elapsed": 0.00099945068359375,
+    "legal_count": 0,
+    "total_count": 1
+  }
+]

@@ -5,9 +5,8 @@ All functions operate on a trained NormalizedFloorplanner model and
 report results in real (un-normalized) coordinates.
 """
 
-import math
 import numpy as np
-from typing import List, Tuple, Dict
+from typing import Dict, List, Tuple
 
 from .model import NormalizedFloorplanner
 
@@ -25,7 +24,7 @@ def calculate_hpwl(
 ) -> float:
     """Compute total weighted HPWL (Half-Perimeter Wirelength).
 
-    HPWL = Σ weight_i * manhattan_distance(center_i, center_j)
+    HPWL = sum(weight_i * manhattan_distance(center_i, center_j))
     """
     rects = _get_real_rects(model)
     name2id = model.name2id
@@ -70,14 +69,14 @@ def calculate_boundary_violation(model: NormalizedFloorplanner) -> Dict[str, flo
     for i in range(model.num_soft):
         cx, cy, w, h = rects[i]
         viol = 0.0
-        viol += max(0, -(cx - w / 2))        # left
-        viol += max(0, (cx + w / 2) - chip_w) # right
-        viol += max(0, -(cy - h / 2))        # bottom
-        viol += max(0, (cy + h / 2) - chip_h) # top
+        viol += max(0, -(cx - w / 2))
+        viol += max(0, (cx + w / 2) - chip_w)
+        viol += max(0, -(cy - h / 2))
+        viol += max(0, (cy + h / 2) - chip_h)
         total_viol += viol
         max_viol = max(max_viol, viol)
 
-    return {'total': total_viol, 'max': max_viol}
+    return {"total": total_viol, "max": max_viol}
 
 
 def check_aspect_ratios(model: NormalizedFloorplanner) -> List[Dict]:
@@ -90,12 +89,14 @@ def check_aspect_ratios(model: NormalizedFloorplanner) -> List[Dict]:
     results = []
     for i in range(model.num_soft):
         _, _, w, h = rects[i]
-        ar = h / w if w > 0 else float('inf')
-        results.append({
-            'name': model.mod_names[i],
-            'aspect_ratio': ar,
-            'valid': 0.5 <= ar <= 2.0,
-        })
+        ar = h / w if w > 0 else float("inf")
+        results.append(
+            {
+                "name": model.mod_names[i],
+                "aspect_ratio": ar,
+                "valid": 0.5 <= ar <= 2.0,
+            }
+        )
     return results
 
 
@@ -113,15 +114,16 @@ def check_rectangle_ratios(model: NormalizedFloorplanner) -> List[Dict]:
     results = []
     for i in range(model.num_soft):
         _, _, w, h = rects[i]
-        # For rectangles: actual_area == bounding_area, ratio = 1.0
         actual_area = w * h
         bounding_area = w * h
         ratio = actual_area / bounding_area if bounding_area > 0 else 0
-        results.append({
-            'name': model.mod_names[i],
-            'rect_ratio': ratio,
-            'valid': 0.8 <= ratio <= 1.0,
-        })
+        results.append(
+            {
+                "name": model.mod_names[i],
+                "rect_ratio": ratio,
+                "valid": 0.8 <= ratio <= 1.0,
+            }
+        )
     return results
 
 
@@ -136,17 +138,18 @@ def print_report(
     boundary = calculate_boundary_violation(model)
     ar_results = check_aspect_ratios(model)
 
-    ar_violations = [r for r in ar_results if not r['valid']]
+    ar_violations = [r for r in ar_results if not r["valid"]]
     chip_area = model.norm_chip_w * model.norm_chip_h * (model.scale_factor ** 2)
 
     print("=" * 60)
     print("            EVALUATION  REPORT")
     print("=" * 60)
     print(f"  Total Weighted HPWL :  {hpwl:>15,.0f}")
-    print(f"  Total Overlap Area  :  {overlap:>15,.0f}"
-          f"  {'✓ LEGAL' if overlap < 1.0 else '✗ OVERLAP'}")
-    print(f"  Boundary Violation  :  {boundary['total']:>15,.1f}"
-          f"  (max single = {boundary['max']:,.1f})")
+    print(f"  Total Overlap Area  :  {overlap:>15,.0f}  {'LEGAL' if overlap < 1.0 else 'OVERLAP'}")
+    print(
+        f"  Boundary Violation  :  {boundary['total']:>15,.1f}"
+        f"  (max single = {boundary['max']:,.1f})"
+    )
     print(f"  Aspect Ratio Viols  :  {len(ar_violations):>15d} / {model.num_soft}")
     if elapsed_sec > 0:
         print(f"  Elapsed Time        :  {elapsed_sec:>15.2f} sec")
@@ -155,14 +158,14 @@ def print_report(
 
     if ar_violations:
         print("  AR violations:")
-        for v in ar_violations:
-            print(f"    {v['name']:>10s}  AR={v['aspect_ratio']:.3f}")
+        for violation in ar_violations:
+            print(f"    {violation['name']:>10s}  AR={violation['aspect_ratio']:.3f}")
         print()
 
     return {
-        'hpwl': hpwl,
-        'overlap': overlap,
-        'boundary': boundary,
-        'ar_violations': len(ar_violations),
-        'elapsed_sec': elapsed_sec,
+        "hpwl": hpwl,
+        "overlap": overlap,
+        "boundary": boundary,
+        "ar_violations": len(ar_violations),
+        "elapsed_sec": elapsed_sec,
     }
